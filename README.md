@@ -83,4 +83,4 @@ See the [Wan2GP GitHub repository](https://github.com/deepbeepmeep/Wan2GP) for m
 
 ## License
 
-Wan2GP and this installer are released under the same license as the main Wan2.1 project. Refer to the [Wan2GP repository](https://github.com/deepbeepmeep/Wan2GP) for details.
+This installer script is released under the [MIT License](LICENSE). You are free to use, modify, and distribute this script with proper attribution.
