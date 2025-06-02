@@ -3,6 +3,7 @@ setlocal enabledelayedexpansion
 
 :: Wan2GP One-Click Installer and Launcher for Windows
 :: This script automatically installs and runs Wan2GP with all dependencies
+:: Always installs to %userprofile%\Wan2GP regardless of admin rights or script location
 
 title Wan2GP Auto-Installer and Launcher
 
@@ -11,8 +12,13 @@ echo    Wan2GP One-Click Installer
 echo ========================================
 echo.
 
+:: Set the installation directory to user's profile, regardless of admin rights or script location
+set "INSTALL_DIR=%userprofile%\Wan2GP"
+echo Target installation directory: !INSTALL_DIR!
+echo.
+
 :: Check if already installed
-if exist "Wan2GP\wan2gp_installed.flag" (
+if exist "!INSTALL_DIR!\wan2gp_installed.flag" (
     echo Installation detected. Launching Wan2GP...
     goto :launch
 )
@@ -21,8 +27,8 @@ echo Starting fresh installation...
 echo.
 
 :: Create installation directory
-if not exist "Wan2GP" mkdir Wan2GP
-cd Wan2GP
+if not exist "!INSTALL_DIR!" mkdir "!INSTALL_DIR!"
+cd /d "!INSTALL_DIR!"
 
 :: Check for Python 3.10
 echo [1/8] Checking Python 3.10 installation...
@@ -34,12 +40,15 @@ if errorlevel 1 (
     echo Downloading Python 3.10.9...
     powershell -Command "& {Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.10.9/python-3.10.9-amd64.exe' -OutFile 'python-installer.exe'}"
     
-    :: Install Python silently
-    echo Installing Python 3.10.9...
-    python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
+    :: Install Python silently for current user only
+    echo Installing Python 3.10.9 for current user...
+    python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 TargetDir="%userprofile%\AppData\Local\Programs\Python\Python310"
     
     :: Wait for installation to complete
     timeout /t 30 /nobreak >nul
+    
+    :: Add Python to PATH for current session
+    set "PATH=%userprofile%\AppData\Local\Programs\Python\Python310;%userprofile%\AppData\Local\Programs\Python\Python310\Scripts;%PATH%"
     
     :: Refresh environment variables
     call refreshenv.cmd 2>nul || (
@@ -63,15 +72,15 @@ if errorlevel 1 (
     echo Downloading Git...
     powershell -Command "& {Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/download/v2.42.0.windows.2/Git-2.42.0.2-64-bit.exe' -OutFile 'git-installer.exe'}"
     
-    :: Install Git silently
+    :: Install Git silently for current user
     echo Installing Git...
-    git-installer.exe /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh"
+    git-installer.exe /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh" /DIR="%userprofile%\AppData\Local\Programs\Git"
     
     :: Wait for installation
     timeout /t 60 /nobreak >nul
     
     :: Add Git to PATH for current session
-    set "PATH=%PATH%;C:\Program Files\Git\bin"
+    set "PATH=%PATH%;%userprofile%\AppData\Local\Programs\Git\bin"
     
     del git-installer.exe
 ) else (
@@ -259,7 +268,7 @@ if not errorlevel 1 (
 )
 
 :continue_installation
-:: Clone repository
+:: Clone repository to 'source' subfolder to prevent nesting issues
 echo [4/8] Downloading Wan2GP source code...
 if not exist "source" (
     git clone https://github.com/deepbeepmeep/Wan2GP.git source
@@ -270,19 +279,33 @@ if not exist "source" (
     )
 )
 
-cd source
+:: Navigate to source directory before creating virtual environment
+cd /d "!INSTALL_DIR!\source"
 
-:: Create virtual environment
+:: Create virtual environment using absolute path
 echo [5/8] Creating Python virtual environment...
-python -m venv wan2gp_env
+set "VENV_PATH=!INSTALL_DIR!\source\wan2gp_env"
+echo Creating virtual environment at: !VENV_PATH!
+
+python -m venv "!VENV_PATH!"
 if errorlevel 1 (
     echo Failed to create virtual environment.
     pause
     exit /b 1
 )
 
-:: Activate virtual environment
-call wan2gp_env\Scripts\activate.bat
+:: Activate virtual environment using absolute path
+echo Activating virtual environment...
+call "!VENV_PATH!\Scripts\activate.bat"
+
+:: Verify activation worked
+if not defined VIRTUAL_ENV (
+    echo Error: Virtual environment activation failed
+    pause
+    exit /b 1
+)
+
+echo Virtual environment successfully activated: %VIRTUAL_ENV%
 
 :: Upgrade pip
 python -m pip install --upgrade pip
@@ -327,7 +350,7 @@ echo Installing Flash Attention (optional)...
 pip install flash-attn==2.7.2.post1 2>nul || echo Flash Attention installation failed - continuing without it.
 
 :: Create installation flag
-echo Installation completed successfully! > ..\wan2gp_installed.flag
+echo Installation completed successfully! > "!INSTALL_DIR!\wan2gp_installed.flag"
 
 echo.
 echo ========================================
@@ -336,15 +359,75 @@ echo ========================================
 echo.
 
 :launch
-:: Launch the application
-cd source 2>nul || cd Wan2GP\source
+:: Always use the user profile directory for launch, regardless of script location
+set "INSTALL_DIR=%userprofile%\Wan2GP"
+set "SOURCE_DIR=%INSTALL_DIR%\source"
+set "VENV_PATH=%INSTALL_DIR%\source\wan2gp_env"
 
-:: Activate environment if not already active
-if not defined VIRTUAL_ENV (
-    call wan2gp_env\Scripts\activate.bat
+:: Check if installation exists
+if not exist "!SOURCE_DIR!" (
+    echo Error: Wan2GP installation not found at !SOURCE_DIR!
+    echo Please delete !INSTALL_DIR! and run this script as administrator to reinstall.
+    pause
+    exit /b 1
 )
 
-echo Starting Wan2GP...
+:: Check if virtual environment exists USING ABSOLUTE PATH
+if not exist "!VENV_PATH!\Scripts\activate.bat" (
+    echo Error: Virtual environment not found at !VENV_PATH!
+    echo The installation appears corrupted.
+    echo Please delete !INSTALL_DIR! and run this script as administrator to reinstall.
+    pause
+    exit /b 1
+)
+
+echo Starting Wan2GP from: !SOURCE_DIR!
+echo Using virtual environment: !VENV_PATH!
+echo.
+
+:: Navigate to source directory
+cd /d "!SOURCE_DIR!" || (
+    echo Error: Could not navigate to !SOURCE_DIR!
+    pause
+    exit /b 1
+)
+
+echo Activating virtual environment...
+
+:: Activate using absolute path and verify it worked correctly
+call "!VENV_PATH!\Scripts\activate.bat"
+
+:: Verify the environment is activated and using the correct path
+if not defined VIRTUAL_ENV (
+    echo Error: Failed to activate virtual environment.
+    echo Expected path: !VENV_PATH!
+    pause
+    exit /b 1
+)
+
+:: Additional verification - check if the path is correct
+echo Virtual environment activated: %VIRTUAL_ENV%
+echo Expected: !VENV_PATH!
+
+:: Check if paths match (normalize paths for comparison)
+set "EXPECTED_NORM=!VENV_PATH!"
+set "ACTUAL_NORM=%VIRTUAL_ENV%"
+:: Convert to lowercase for comparison
+for %%i in ("!EXPECTED_NORM!") do set "EXPECTED_NORM=%%~fi"
+for %%i in ("!ACTUAL_NORM!") do set "ACTUAL_NORM=%%~fi"
+
+if not "!EXPECTED_NORM!"=="!ACTUAL_NORM!" (
+    echo Warning: Virtual environment path mismatch!
+    echo Expected: !EXPECTED_NORM!
+    echo Actual:   !ACTUAL_NORM!
+    echo.
+    echo This suggests the virtual environment was created in the wrong location.
+    echo Please delete !INSTALL_DIR! and reinstall as administrator.
+    pause
+    exit /b 1
+)
+
+echo Current directory: %CD%
 echo.
 echo The application will open in your web browser at http://localhost:7860
 echo Close this window to stop the application.
