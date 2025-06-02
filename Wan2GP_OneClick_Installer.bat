@@ -326,12 +326,11 @@ if errorlevel 1 (
     echo Failed to install requirements. Continuing anyway...
 )
 
-:: Install optional performance enhancements
-echo [8/8] Installing performance enhancements...
+:: Install performance enhancements with comprehensive Triton compatibility handling
+echo [8/8] Installing performance enhancements with Triton compatibility...
 
-:: Install Triton for Windows
-echo Installing Triton...
-pip install triton-windows
+:: Function to install compatible Triton based on PyTorch version
+call :install_triton_windows
 
 :: Install SageAttention
 echo Installing SageAttention...
@@ -340,9 +339,13 @@ pip install sageattention==1.0.6
 :: Try to install SageAttention 2 (40% faster)
 echo Installing SageAttention 2...
 if "!PYTORCH_VERSION!"=="2.7.0" (
-    pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1+cu128torch2.7.0-cp310-cp310-win_amd64.whl
+    pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1+cu128torch2.7.0-cp310-cp310-win_amd64.whl 2>nul || (
+        echo SageAttention 2 for PyTorch 2.7.0 failed, using SageAttention 1.0.6
+    )
 ) else (
-    pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1+cu126torch2.6.0-cp310-cp310-win_amd64.whl
+    pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1+cu126torch2.6.0-cp310-cp310-win_amd64.whl 2>nul || (
+        echo SageAttention 2 for PyTorch 2.6.0 failed, using SageAttention 1.0.6
+    )
 )
 
 :: Try to install Flash Attention (may fail on some systems)
@@ -357,6 +360,110 @@ echo ========================================
 echo    Installation Complete!
 echo ========================================
 echo.
+
+goto :launch
+
+:: Function to install compatible Triton for Windows
+:install_triton_windows
+echo Installing Triton for Windows with compatibility handling...
+
+:: Remove any existing Triton installations first
+pip uninstall triton triton-windows -y 2>nul
+
+:: Determine compatible Triton version based on PyTorch version
+if "!PYTORCH_VERSION!"=="2.7.0" (
+    set "TRITON_VERSION=3.3"
+    set "TRITON_CONSTRAINT=triton-windows<3.4"
+    echo Using Triton 3.3.x for PyTorch 2.7.0
+) else (
+    set "TRITON_VERSION=3.2"
+    set "TRITON_CONSTRAINT=triton-windows<3.3"
+    echo Using Triton 3.2.x for PyTorch 2.6.0
+)
+
+:: Install triton-windows with version constraint
+echo Installing !TRITON_CONSTRAINT!...
+pip install "!TRITON_CONSTRAINT!" 2>nul || (
+    echo Primary triton-windows installation failed, trying alternatives...
+    
+    :: Try specific working versions
+    if "!PYTORCH_VERSION!"=="2.7.0" (
+        pip install triton-windows==3.3.1.post19 2>nul || (
+            pip install triton-windows==3.3.0 2>nul || (
+                echo Triton 3.3.x failed, falling back to 3.2.x...
+                pip install "triton-windows<3.3" 2>nul
+            )
+        )
+    ) else (
+        pip install triton-windows==3.2.0.post11 2>nul || (
+            pip install triton-windows==3.2.0 2>nul || (
+                echo Triton 3.2.x failed, trying 3.1.x...
+                pip install triton-windows==3.1.0 2>nul
+            )
+        )
+    )
+)
+
+:: Verify Triton installation and test AttrsDescriptor import
+echo Verifying Triton installation...
+python -c "import triton; print('Triton version:', triton.__version__)" 2>nul || (
+    echo Triton import failed, attempting manual installation...
+    goto :manual_triton_install
+)
+
+:: Test for AttrsDescriptor compatibility
+python -c "from triton.backends.compiler import AttrsDescriptor; print('AttrsDescriptor found in backends.compiler')" 2>nul && (
+    echo Triton compatibility verified successfully!
+    goto :triton_success
+)
+
+python -c "from triton.compiler.compiler import AttrsDescriptor; print('AttrsDescriptor found in compiler.compiler')" 2>nul && (
+    echo Triton compatibility verified successfully!
+    goto :triton_success
+)
+
+echo AttrsDescriptor not found, attempting compatibility fix...
+
+:manual_triton_install
+:: Manual installation of known working versions
+echo Attempting manual Triton installation with known working versions...
+
+:: Try pre-built wheels from HuggingFace for specific PyTorch versions
+if "!PYTORCH_VERSION!"=="2.6.0" (
+    echo Trying pre-built Triton wheel for PyTorch 2.6.0...
+    pip install https://huggingface.co/r4ziel/xformers_pre_built/resolve/main/triton-2.0.0-cp310-cp310-win_amd64.whl 2>nul || (
+        echo Pre-built wheel failed, trying triton-windows 3.1.x...
+        pip install triton-windows==3.1.0 2>nul
+    )
+) else (
+    echo Trying triton-windows 3.2.x for PyTorch 2.7.0...
+    pip install triton-windows==3.2.0.post11 2>nul
+)
+
+:: Final verification
+python -c "import triton; print('Triton manually installed, version:', triton.__version__)" 2>nul || (
+    echo Warning: All Triton installation attempts failed.
+    echo The application will run without Triton optimizations.
+    goto :triton_failed
+)
+
+:: Test AttrsDescriptor one more time
+python -c "from triton.backends.compiler import AttrsDescriptor" 2>nul || (
+    python -c "from triton.compiler.compiler import AttrsDescriptor" 2>nul || (
+        echo Warning: AttrsDescriptor still not found after manual installation.
+        echo This may cause compilation issues but basic functionality should work.
+        goto :triton_failed
+    )
+)
+
+:triton_success
+echo Triton installation and compatibility verification successful!
+goto :eof
+
+:triton_failed
+echo Triton installation completed with warnings.
+echo The application will function but may have reduced performance.
+goto :eof
 
 :launch
 :: Always use the user profile directory for launch, regardless of script location
@@ -405,11 +512,7 @@ if not defined VIRTUAL_ENV (
     exit /b 1
 )
 
-:: Additional verification - check if the path is correct
-echo Virtual environment activated: %VIRTUAL_ENV%
-echo Expected: !VENV_PATH!
-
-:: Check if paths match (normalize paths for comparison)
+:: Additional verification - check if paths match (normalize paths for comparison)
 set "EXPECTED_NORM=!VENV_PATH!"
 set "ACTUAL_NORM=%VIRTUAL_ENV%"
 :: Convert to lowercase for comparison
@@ -427,31 +530,127 @@ if not "!EXPECTED_NORM!"=="!ACTUAL_NORM!" (
     exit /b 1
 )
 
+echo Virtual environment activated: %VIRTUAL_ENV%
 echo Current directory: %CD%
 echo.
+
+:: Perform comprehensive runtime Triton compatibility check and fix
+call :runtime_triton_check
+
 echo The application will open in your web browser at http://localhost:7860
 echo Close this window to stop the application.
 echo.
 
-:: Launch with optimal settings
-python wgp.py --open-browser --compile --attention sage2
-
-:: Fallback to sage if sage2 fails
-if errorlevel 1 (
+:: Launch with optimal settings and automatic fallback handling
+echo Attempting to start with SageAttention 2 and compilation...
+python wgp.py --open-browser --compile --attention sage2 2>nul || (
     echo SageAttention 2 failed, trying SageAttention...
-    python wgp.py --open-browser --compile --attention sage
-)
-
-:: Fallback to default if sage fails
-if errorlevel 1 (
-    echo SageAttention failed, using default attention...
-    python wgp.py --open-browser --compile
-)
-
-:: Final fallback without compilation
-if errorlevel 1 (
-    echo Compilation failed, running without optimization...
-    python wgp.py --open-browser
+    python wgp.py --open-browser --compile --attention sage 2>nul || (
+        echo SageAttention failed, trying with compilation only...
+        python wgp.py --open-browser --compile 2>nul || (
+            echo Compilation failed due to Triton issues, running without optimization...
+            python wgp.py --open-browser 2>nul || (
+                echo All launch attempts failed. Attempting final Triton fix...
+                call :emergency_triton_fix
+                
+                echo Retrying launch without compilation...
+                python wgp.py --open-browser || (
+                    echo.
+                    echo ========================================
+                    echo    Launch Failed - Manual Intervention Required
+                    echo ========================================
+                    echo.
+                    echo The application failed to start. This could be due to:
+                    echo 1. Triton compatibility issues
+                    echo 2. Missing dependencies
+                    echo 3. GPU driver problems
+                    echo.
+                    echo To troubleshoot:
+                    echo 1. Check the error messages above
+                    echo 2. Try running: python wgp.py --help
+                    echo 3. Check GPU drivers are up to date
+                    echo 4. Reinstall by deleting !INSTALL_DIR! and running this script again
+                    echo.
+                    pause
+                    exit /b 1
+                )
+            )
+        )
+    )
 )
 
 pause
+goto :eof
+
+:: Function for runtime Triton compatibility check
+:runtime_triton_check
+echo Performing comprehensive runtime Triton compatibility check...
+
+:: Check if Triton is installed at all
+python -c "import triton" 2>nul || (
+    echo Triton not found at runtime. Installing emergency fallback...
+    call :emergency_triton_fix
+    goto :eof
+)
+
+:: Check for AttrsDescriptor in both possible locations
+python -c "from triton.backends.compiler import AttrsDescriptor; print('Runtime check: AttrsDescriptor found in backends.compiler')" 2>nul && (
+    echo Runtime Triton compatibility verified!
+    goto :eof
+)
+
+python -c "from triton.compiler.compiler import AttrsDescriptor; print('Runtime check: AttrsDescriptor found in compiler.compiler')" 2>nul && (
+    echo Runtime Triton compatibility verified!
+    goto :eof
+)
+
+echo Runtime Triton compatibility issue detected. Attempting automatic fix...
+
+:: Get current PyTorch version to determine compatible Triton
+for /f "tokens=*" %%i in ('python -c "import torch; print(torch.__version__.split('+')[0])" 2^>nul') do set DETECTED_PYTORCH=%%i
+
+echo Detected PyTorch version: !DETECTED_PYTORCH!
+
+:: Install compatible Triton based on detected PyTorch version
+if "!DETECTED_PYTORCH!"=="2.7.0" (
+    echo Installing Triton 3.3.x for PyTorch 2.7.0...
+    pip uninstall triton triton-windows -y 2>nul
+    pip install "triton-windows<3.4" 2>nul || pip install triton-windows==3.3.1.post19 2>nul
+) else if "!DETECTED_PYTORCH!"=="2.6.0" (
+    echo Installing Triton 3.2.x for PyTorch 2.6.0...
+    pip uninstall triton triton-windows -y 2>nul
+    pip install "triton-windows<3.3" 2>nul || pip install triton-windows==3.2.0.post11 2>nul
+) else (
+    echo Installing general compatible Triton...
+    pip uninstall triton triton-windows -y 2>nul
+    pip install triton-windows==3.1.0 2>nul
+)
+
+:: Final verification
+python -c "from triton.backends.compiler import AttrsDescriptor" 2>nul || (
+    python -c "from triton.compiler.compiler import AttrsDescriptor" 2>nul || (
+        echo Warning: Runtime Triton fix unsuccessful.
+        echo The application may experience compilation issues.
+    )
+)
+
+goto :eof
+
+:: Emergency Triton fix function
+:emergency_triton_fix
+echo Performing emergency Triton installation...
+
+:: Remove all Triton installations
+pip uninstall triton triton-windows -y 2>nul
+
+:: Try multiple known working versions in order of preference
+pip install triton-windows==3.1.0 2>nul || (
+    pip install triton-windows==3.0.0 2>nul || (
+        pip install https://huggingface.co/r4ziel/xformers_pre_built/resolve/main/triton-2.0.0-cp310-cp310-win_amd64.whl 2>nul || (
+            echo Emergency Triton installation failed.
+            echo Continuing without Triton optimizations.
+        )
+    )
+)
+
+goto :eof
