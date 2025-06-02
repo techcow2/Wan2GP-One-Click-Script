@@ -1,6 +1,7 @@
 # Wan2GP One-Click Automated Installer
 
-This repository provides a one-click, fully automated script for installing [Wan2GP](https://github.com/deepbeepmeep/Wan2GP), an open-source text-to-video and Lora generation suite for NVIDIA GPUs. The script manages all dependencies, sets up the environment, and launches Wan2GP in your browser.
+This repository provides a one-click, fully automated script for installing [Wan2GP](https://github.com/deepbeepmeep/Wan2GP), an open-source text-to-video and Lora generation suite for NVIDIA GPUs. **Wan2GP is built for the GPU poor—offering low VRAM requirements, fast generation, and an easy-to-use web UI.** The script manages all dependencies, sets up the environment, and launches Wan2GP in your browser.
+
 
 ---
 
